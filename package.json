@@ -2,13 +2,16 @@
   "name": "job-scraper",
   "version": "1.0.0",
   "description": "Automatically scrapes job postings from various job boards.",
+  "type": "module",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Jonathan Lee",
   "license": "MIT",
   "dependencies": {
+    "moment": "^2.30.1",
     "puppeteer": "^24.1.1"
   }
 }
