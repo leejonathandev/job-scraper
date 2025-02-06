@@ -134,3 +134,22 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Node.js
+pids/
+
+# Environment variables
+.env*
+
+# TypeScript build output
+dist/
+out/
+build/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+
+# Test coverage reports
+coverage/
