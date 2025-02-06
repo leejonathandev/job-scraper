@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "outDir": "./dist",
+        "target": "ESNext",
+        "module": "NodeNext", /* Specify module code generation: 'nodenext'. */
+        "moduleResolution": "nodenext", /* Specify module resolution strategy: 'nodenext'. */
+        "forceConsistentCasingInFileNames": true, /* Disallow inconsistently-cased references to the same file. */
+        "strict": true, /* Enable all strict type-checking options. */
+        "exactOptionalPropertyTypes": true, /* Interpret optional property types as written, rather than adding 'undefined'. */
+    },
+    "include": [
+        "./src/**/*"
+    ]
+}
