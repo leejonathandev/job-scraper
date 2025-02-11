@@ -5,5 +5,6 @@ This project uses Puppeteer to automatically refresh job board pages and check f
 ## Usage
 ```bash
 npm install
-node index.js
+npm run build
+npm run start
 ```
