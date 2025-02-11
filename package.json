@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "Automatically scrapes job postings from various job boards.",
   "type": "module",
-  "main": "index.js",
+  "main": "app.js",
   "scripts": {
-    "start": "tsx ./src/index.ts"
+    "dev": "tsx ./src/app.ts",
+    "build": "tsc --build",
+    "clean": "tsc --clean",
+    "start": "node ./dist/app.js"
   },
   "author": "Jonathan Lee",
   "license": "MIT",
