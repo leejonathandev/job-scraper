@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  job-scraper:
+    image: ghcr.io/leejonathandev/job-scraper:latest
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      - NODE_ENV=production
+      - NOTIFICATION_WEBHOOK=your_webhook_url
+    restart: unless-stopped
