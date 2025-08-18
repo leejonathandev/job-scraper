@@ -1,9 +1,30 @@
+# Docker
+Dockerfile
+.dockerignore
+
+# Version Control
 .git
+.gitgnore
 .vscode
+
+# Development Environment
+.vscode
+
+# Environment and Secrets
 .env
+.env.*
+*.env
+
+# Dependencies
+node_modules
+package-lock.json.tmp
+
+# Build Outputs
+dist
+build
+*.tsbuildinfo
+
+# Other
 README.md
 LICENSE
-npm-debug.log
-coverage
-dist
-node_modules
+
