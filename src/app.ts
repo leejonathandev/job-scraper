@@ -80,11 +80,14 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
     }
 
     if (newListings.size === 0) {
-        console.log("No new job listings found as of " + moment().format('YYYY-MM-DD HH:mm:ss'));
+        console.log("No new job listings found")
         return;
     }
 
     for (const listing of newListings.values()) {
+
+        console.log(`New job listing found: ${listing.title} at ${listing.location} - ${listing.url}`);
+
         const payload = {
             content: "New job listing found:",
             embeds: [{
@@ -117,10 +120,13 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
 }
 
 async function main() {
+
     process.on('SIGINT', async () => {
         console.log('Shutting down gracefully...');
         process.exit(0);
     });
+
+    console.log("Starting monitoring...");
 
     let oldListings = new Map<string, JobListing>();
     while (true) {
@@ -131,6 +137,7 @@ async function main() {
         } catch (error) {
             console.error('Error in main loop:', error);
         }
+        console.log(`Finished checking at ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
         await new Promise(r => setTimeout(r, (Number(process.env.REFRESH_DURATION) || 60) * 60 * 1000));
     }
 }
