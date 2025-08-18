@@ -1,5 +1,5 @@
 import moment from "moment";
-import puppeteer, { Browser } from "puppeteer";
+import puppeteer from "puppeteer";
 import https from "https";
 import 'dotenv/config'
 
@@ -69,7 +69,7 @@ function getNewEntries<K, V>(oldMap: Map<K, V>, newMap: Map<K, V>): Map<K, V> {
 }
 
 const rateLimiter = async () => {
-    await new Promise(r => setTimeout(r, 1000)); // 1 second delay between notifications
+    await new Promise(r => setTimeout(r, 100)); // 100 millisecond delay between notifications
 };
 
 async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
