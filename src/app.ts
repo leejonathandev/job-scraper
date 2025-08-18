@@ -1,7 +1,19 @@
-import moment from "moment";
 import puppeteer from "puppeteer";
 import https from "https";
 import 'dotenv/config'
+
+function formatDate(date: Date): string {
+    return date.toLocaleString('en-US', {
+        timeZone: process.env.TZ || 'UTC',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+    }).replace(/(\d+)\/(\d+)\/(\d+),\s(\d+):(\d+):(\d+)/, '$3-$1-$2 $4:$5:$6');
+}
 
 type JobListing = {
     title: string,
@@ -42,7 +54,7 @@ async function getRiotGamesListings(): Promise<Map<string, JobListing>> {
         const url = await rawJobListing.getProperty('href').then(el => el?.jsonValue()) as string || "n/a";
 
         // Get current date time
-        const foundDate = moment().format('YYYY-MM-DD HH:mm:ss');
+        const foundDate = formatDate(new Date());
 
         // Create a unique hash ID for the job listing
         const hashId: string = "RIOT-" + new URL(url).pathname.split('/').pop();
@@ -80,7 +92,7 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
     }
 
     if (newListings.size === 0) {
-        console.log("No new job listings found")
+        console.log("No new job listings found");
         return;
     }
 
@@ -121,6 +133,7 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
 
 async function main() {
 
+
     process.on('SIGINT', async () => {
         console.log('Shutting down gracefully...');
         process.exit(0);
@@ -137,7 +150,7 @@ async function main() {
         } catch (error) {
             console.error('Error in main loop:', error);
         }
-        console.log(`Finished checking at ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
+        console.log(`Finished checking at ${formatDate(new Date())}`);
         await new Promise(r => setTimeout(r, (Number(process.env.REFRESH_DURATION) || 60) * 60 * 1000));
     }
 }
