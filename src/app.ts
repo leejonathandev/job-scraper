@@ -117,14 +117,20 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
 }
 
 async function main() {
+    process.on('SIGINT', async () => {
+        console.log('Shutting down gracefully...');
+        process.exit(0);
+    });
 
     let oldListings = new Map<string, JobListing>();
     while (true) {
-        let currListings = await getRiotGamesListings();
-        sendWebhookNotifications(getNewEntries(oldListings, currListings)).catch(console.error);
-        oldListings = currListings;
-
-        // default timeout for sixty minutes
+        try {
+            let currListings = await getRiotGamesListings();
+            await sendWebhookNotifications(getNewEntries(oldListings, currListings));
+            oldListings = currListings;
+        } catch (error) {
+            console.error('Error in main loop:', error);
+        }
         await new Promise(r => setTimeout(r, (Number(process.env.REFRESH_DURATION) || 60) * 60 * 1000));
     }
 }
