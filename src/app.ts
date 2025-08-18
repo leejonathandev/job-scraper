@@ -1,48 +1,131 @@
 import moment from "moment";
 import puppeteer, { Browser } from "puppeteer";
-
-const REFRESH_DURATION = 60; // in minutes  
+import https from "https";
+import 'dotenv/config'
 
 type JobListing = {
-    id: string,
-    jobTitle: string,
-    jobLocation: string,
-    jobUrl: string,
+    title: string,
+    location: string,
+    url: string,
     foundDate: string
 }
 
-async function getRiotGamesListings(browser: Browser): Promise<JobListing[]> {
-    const jobListings: JobListing[] = [];
+async function getRiotGamesListings(): Promise<Map<string, JobListing>> {
+    const titleInclude = ["Software"];
+    const titleExclude = ["Staff", "Principal", "Manager"];
+    const locationInclude = ["Los Angeles", "Mercer Island", "SF Bay Area"];
 
-    let rawJobListingsXpath = "//ul[@class='job-list__body list--unstyled']/li/a";
+    const jobListings: Map<string, JobListing> = new Map();
 
+    const browser = await puppeteer.launch();
     const page = await browser.newPage();
     await page.goto("https://www.riotgames.com/en/work-with-us/jobs", { waitUntil: 'domcontentloaded' });
 
+    // Get raw job listings
+    let rawJobListingsXpath = "//ul[@class='job-list__body list--unstyled']/li/a";
     let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
     for (const rawJobListing of rawJobListings) {
-        const jobTitle = await rawJobListing.$eval('div.job-row__col--primary', el => el.textContent) || "n/a";
-        const jobLocation = await rawJobListing.$$eval('div.job-row__col--secondary', els => els[2].textContent) || "n/a";
-        const jobUrl = await rawJobListing.getProperty('href').then(el => el?.jsonValue()) as string || "n/a";
+
+        // Extract job title
+        const title = await rawJobListing.$eval('div.job-row__col--primary', el => el.textContent) || "n/a";
+        if (titleExclude.some(exclude => title.includes(exclude)) || !titleInclude.some(include => title.includes(include))) {
+            continue;
+        }
+
+        // Extract job location
+        const location = await rawJobListing.$$eval('div.job-row__col--secondary', el => el[2].textContent) || "n/a";
+        if (!locationInclude.some(include => location.includes(include))) {
+            continue;
+        }
+
+        // Extract job URL
+        const url = await rawJobListing.getProperty('href').then(el => el?.jsonValue()) as string || "n/a";
+
+        // Get current date time
         const foundDate = moment().format('YYYY-MM-DD HH:mm:ss');
-        const hashId: string = "RIOT-" + new URL(jobUrl).pathname.split('/').pop();
-        jobListings.push({ id: hashId, jobTitle: jobTitle, jobLocation: jobLocation, jobUrl: jobUrl, foundDate: foundDate });
+
+        // Create a unique hash ID for the job listing
+        const hashId: string = "RIOT-" + new URL(url).pathname.split('/').pop();
+
+        // Store the job listing
+        jobListings.set(hashId, { title, location, url, foundDate });
     }
-    page.close();
+
+    await browser.close();
     return jobListings;
+}
+
+function getNewEntries<K, V>(oldMap: Map<K, V>, newMap: Map<K, V>): Map<K, V> {
+    const newEntries = new Map<K, V>();
+
+    for (const [key, value] of newMap) {
+        // If the old map does not have the key, it's a new entry.
+        if (!oldMap.has(key)) {
+            newEntries.set(key, value);
+        }
+    }
+
+    return newEntries;
+}
+
+const rateLimiter = async () => {
+    await new Promise(r => setTimeout(r, 1000)); // 1 second delay between notifications
+};
+
+async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
+    const webhookUrl = process.env.NOTIFICATION_WEBHOOK;
+    if (!webhookUrl) {
+        console.error("Webhook URL is not defined");
+        return;
+    }
+
+    if (newListings.size === 0) {
+        console.log("No new job listings found as of " + moment().format('YYYY-MM-DD HH:mm:ss'));
+        return;
+    }
+
+    for (const listing of newListings.values()) {
+        const payload = {
+            content: "New job listing found:",
+            embeds: [{
+                title: listing.title,
+                url: listing.url,
+                description: `Location: ${listing.location}\nFound Date: ${listing.foundDate}`
+            }]
+        };
+
+        const req = https.request(webhookUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            }
+        }, (res) => {
+            if (res.statusCode !== 204) {
+                console.error(`Failed to send webhook: ${res.statusCode}`);
+            }
+        });
+
+        req.on("error", (error) => {
+            console.error(`Error sending webhook: ${error}`);
+        });
+
+        req.write(JSON.stringify(payload));
+        req.end();
+
+        await rateLimiter(); // Replace the direct setTimeout
+    }
 }
 
 async function main() {
 
-    const browser = await puppeteer.launch();
-
+    let oldListings = new Map<string, JobListing>();
     while (true) {
-        try {
-            const newListings = await getRiotGamesListings(browser);
-        } catch (e) {
-            console.log(`ERROR: ${e}`);
-        }
-        await new Promise(r => setTimeout(r, REFRESH_DURATION * 60 * 1000));
+        let currListings = await getRiotGamesListings();
+        sendWebhookNotifications(getNewEntries(oldListings, currListings)).catch(console.error);
+        oldListings = currListings;
+
+        // default timeout for sixty minutes
+        await new Promise(r => setTimeout(r, (Number(process.env.REFRESH_DURATION) || 60) * 60 * 1000));
     }
 }
 
