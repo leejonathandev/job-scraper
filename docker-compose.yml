@@ -7,5 +7,5 @@ services:
       - SYS_ADMIN
     environment:
       - NODE_ENV=production
-      - NOTIFICATION_WEBHOOK=your_webhook_url
+      - NOTIFICATION_WEBHOOK=${NOTIFICATION_WEBHOOK}
     restart: unless-stopped
