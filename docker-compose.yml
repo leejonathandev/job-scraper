@@ -6,6 +6,7 @@ services:
     cap_add:
       - SYS_ADMIN
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       - NOTIFICATION_WEBHOOK=${NOTIFICATION_WEBHOOK}
+      - TZ=${TZ:-UTC}
     restart: unless-stopped
