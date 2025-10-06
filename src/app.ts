@@ -34,7 +34,7 @@ async function getDiscordListings(): Promise<Map<string, JobListing>> {
     await page.goto("https://discord.com/careers", { waitUntil: 'networkidle0' });
 
     // Get raw job listings
-    let rawJobListingsXpath = "//div[@class='jobs-list']/a"; 
+    let rawJobListingsXpath = "//div[@class='jobs-list']/a";
     let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
     console.log(`Found ${rawJobListings.length} raw job listings`);
     for (const rawJobListing of rawJobListings) {
@@ -145,9 +145,9 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
         const payload = {
             content: "New job listing found:",
             embeds: [{
-                title: key,
+                title: listing.title,
                 url: listing.url,
-                description: `Title: ${listing.title}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
+                description: `ID: ${key}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
             }]
         };
 
@@ -194,7 +194,7 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
                         req.write(JSON.stringify(payload));
                         req.end();
                     });
-                    
+
                     shouldRetry = false; // If we get here, the request was successful
                 } catch (error: any) {
                     if (error?.message !== 'rate_limited') {
@@ -211,8 +211,6 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
 }
 
 async function main() {
-
-
     process.on('SIGINT', async () => {
         console.log('Shutting down gracefully...');
         process.exit(0);
@@ -231,7 +229,7 @@ async function main() {
 
             // Combine both maps into a single map
             const currListings = new Map([...discordListings, ...riotListings]);
-            
+
             await sendWebhookNotifications(getNewEntries(oldListings, currListings));
             oldListings = currListings;
         } catch (error) {
