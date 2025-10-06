@@ -1,138 +1,179 @@
-import puppeteer from "puppeteer";
-import https from "https";
-import 'dotenv/config'
+// Node.js built-in modules
+import https from "node:https";
 
-function formatDate(date: Date): string {
-    return date.toLocaleString('en-US', {
-        timeZone: process.env.TZ || 'UTC',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true
-    }).replace(/(\d+)\/(\d+)\/(\d+),\s(\d+):(\d+):(\d+)/, '$3-$1-$2 $4:$5:$6');
-}
+// Third-party modules
+import 'dotenv/config';
+import { type ElementHandle } from 'puppeteer';
 
-type JobListing = {
-    title: string,
-    location: string,
-    url: string,
-    foundDate: string
-}
+// Local modules - config & types
+import { browserManager } from './browserManager.js';
+import config from './config.js';
+import { type Company, type JobListing } from './types.js';
 
-async function getDiscordListings(): Promise<Map<string, JobListing>> {
-    const titleInclude: string[] = ["Software"];
-    const titleExclude = ["Staff", "Principal", "Manager"];
-    const locationInclude: string[] = ["San Francisco", "SF Bay Area", "Remote"];
+// Local modules - utilities
+import { formatDate, truncateString, getNewEntries, rateLimiter } from './utils.js';
 
+
+async function getGoogleListings(): Promise<Map<string, JobListing>> {
+    const companyConfig = config.companies.Google;
     const jobListings: Map<string, JobListing> = new Map();
 
-    const browser = await puppeteer.launch();
+    const browser = await browserManager.getBrowser();
     const page = await browser.newPage();
-    await page.goto("https://discord.com/careers", { waitUntil: 'networkidle0' });
+    await page.goto(companyConfig.url, { waitUntil: companyConfig.waitUntil });
 
     // Get raw job listings
-    let rawJobListingsXpath = "//div[@class='jobs-list']/a";
-    let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
-    console.log(`Found ${rawJobListings.length} raw job listings`);
+    let rawJobListings = await page.$$(companyConfig.selectors.listContainer);
     for (const rawJobListing of rawJobListings) {
+
         // Extract job title
-        const title = await rawJobListing.$eval('h3.heading-28px', el => el.textContent) || "n/a";
-        if (titleExclude.some(exclude => title.includes(exclude)) || !titleInclude.some(include => title.includes(include))) {
+        const title = await rawJobListing.$eval(companyConfig.selectors.title, (el: Element) => el.textContent) || "n/a";
+
+        const { titleInclude, titleExclude, locationInclude } = companyConfig.filters;
+
+        // Check title include filter if specified
+        if (titleInclude?.length && !titleInclude.some(include => title.includes(include))) {
+            continue;
+        }
+
+        // Check title exclude filter if specified
+        if (titleExclude?.length && titleExclude.some(exclude => title.includes(exclude))) {
             continue;
         }
 
         // Extract job location
-        const location = await rawJobListing.$eval('p.paragraph-white-opacity50', el => el.textContent) || "n/a";
-        // if (!locationInclude.some(include => location.includes(include))) {
-        //     continue;
-        // }
+        const location = await rawJobListing.$eval(companyConfig.selectors.location, (el: Element) => el.textContent) || "n/a";
+
+        // Check location include filter if specified
+        if (locationInclude?.length && !locationInclude.some(include => location.includes(include))) {
+            continue;
+        }
 
         // Extract job URL
-        const url = await rawJobListing.getProperty('href').then(el => el?.jsonValue()) as string || "n/a";
+        const url = await rawJobListing.$(companyConfig.selectors.url).then((el: ElementHandle | null) => el?.getProperty('href')).then((el) => el?.jsonValue()) as string || "n/a";
 
         // Get current date time
-        const foundDate = formatDate(new Date());
+        const foundDate = formatDate(new Date(), config.timezone);
+
+        // Create a unique hash ID for the job listing
+        const jobIdMatch = url.match(/\/jobs\/results\/(\d+)-/);
+        const hashId: string = "GOOGLE-" + (jobIdMatch ? jobIdMatch[1] : new URL(url).pathname);
+
+        // Store the job listing
+        jobListings.set(hashId, { title, location, url, foundDate, company: 'Google' });
+    }
+
+    await browserManager.releaseBrowser();
+    return jobListings;
+}
+
+async function getDiscordListings(): Promise<Map<string, JobListing>> {
+    const companyConfig = config.companies.Discord;
+    const jobListings: Map<string, JobListing> = new Map();
+
+    const browser = await browserManager.getBrowser();
+    const page = await browser.newPage();
+    await page.goto(companyConfig.url, { waitUntil: companyConfig.waitUntil });
+
+    // Get raw job listings
+    let rawJobListings = await page.$$(companyConfig.selectors.listContainer);
+    console.log(`Found ${rawJobListings.length} raw job listings`);
+    for (const rawJobListing of rawJobListings) {
+        // Extract job title
+        const title = await rawJobListing.$eval(companyConfig.selectors.title, (el: Element) => el.textContent) || "n/a";
+
+        const { titleInclude, titleExclude, locationInclude } = companyConfig.filters;
+
+        // Check title include filter if specified
+        if (titleInclude?.length && !titleInclude.some(include => title.includes(include))) {
+            continue;
+        }
+
+        // Check title exclude filter if specified
+        if (titleExclude?.length && titleExclude.some(exclude => title.includes(exclude))) {
+            continue;
+        }
+
+        // Extract job location
+        const location = await rawJobListing.$eval(companyConfig.selectors.location, (el: Element) => el.textContent) || "n/a";
+
+        // Check location include filter if specified
+        if (locationInclude?.length && !locationInclude.some(include => location.includes(include))) {
+            continue;
+        }
+
+        // Extract job URL
+        const url = await rawJobListing.getProperty(companyConfig.selectors.url).then((el) => el?.jsonValue()) as string || "n/a";
+
+        // Get current date time
+        const foundDate = formatDate(new Date(), config.timezone);
 
         // Create a unique hash ID for the job listing
         const hashId: string = "DISCORD-" + new URL(url).pathname.split('/').pop();
 
         // Store the job listing
-        jobListings.set(hashId, { title, location, url, foundDate });
+        jobListings.set(hashId, { title, location, url, foundDate, company: 'Discord' });
     }
 
-    await browser.close();
+    await browserManager.releaseBrowser();
     return jobListings;
 }
 
 async function getRiotGamesListings(): Promise<Map<string, JobListing>> {
-    const titleInclude = ["Software"];
-    const titleExclude = ["Staff", "Principal", "Manager"];
-    const locationInclude = ["Los Angeles", "Mercer Island", "SF Bay Area"];
-
+    const companyConfig = config.companies["Riot Games"];
     const jobListings: Map<string, JobListing> = new Map();
 
-    const browser = await puppeteer.launch();
+    const browser = await browserManager.getBrowser();
     const page = await browser.newPage();
-    await page.goto("https://www.riotgames.com/en/work-with-us/jobs", { waitUntil: 'domcontentloaded' });
+    await page.goto(companyConfig.url, { waitUntil: companyConfig.waitUntil });
 
     // Get raw job listings
-    let rawJobListingsXpath = "//ul[@class='job-list__body list--unstyled']/li/a";
-    let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
+    let rawJobListings = await page.$$(companyConfig.selectors.listContainer);
     for (const rawJobListing of rawJobListings) {
 
         // Extract job title
-        const title = await rawJobListing.$eval('div.job-row__col--primary', el => el.textContent) || "n/a";
-        if (titleExclude.some(exclude => title.includes(exclude)) || !titleInclude.some(include => title.includes(include))) {
+        const title = await rawJobListing.$eval(companyConfig.selectors.title, (el: Element) => el.textContent) || "n/a";
+
+        const { titleInclude, titleExclude, locationInclude } = companyConfig.filters;
+
+        // Check title include filter if specified
+        if (titleInclude?.length && !titleInclude.some(include => title.includes(include))) {
+            continue;
+        }
+
+        // Check title exclude filter if specified
+        if (titleExclude?.length && titleExclude.some(exclude => title.includes(exclude))) {
             continue;
         }
 
         // Extract job location
-        const location = await rawJobListing.$$eval('div.job-row__col--secondary', el => el[2].textContent) || "n/a";
-        if (!locationInclude.some(include => location.includes(include))) {
+        const location = await rawJobListing.$$eval(companyConfig.selectors.location, (el: Element[]) => el[2].textContent) || "n/a";
+
+        // Check location include filter if specified
+        if (locationInclude?.length && !locationInclude.some(include => location.includes(include))) {
             continue;
         }
 
         // Extract job URL
-        const url = await rawJobListing.getProperty('href').then(el => el?.jsonValue()) as string || "n/a";
+        const url = await rawJobListing.getProperty(companyConfig.selectors.url).then((el) => el?.jsonValue()) as string || "n/a";
 
         // Get current date time
-        const foundDate = formatDate(new Date());
+        const foundDate = formatDate(new Date(), config.timezone);
 
         // Create a unique hash ID for the job listing
         const hashId: string = "RIOT-" + new URL(url).pathname.split('/').pop();
 
         // Store the job listing
-        jobListings.set(hashId, { title, location, url, foundDate });
+        jobListings.set(hashId, { title, location, url, foundDate, company: 'Riot Games' });
     }
 
-    await browser.close();
+    await browserManager.releaseBrowser();
     return jobListings;
 }
 
-function getNewEntries<K, V>(oldMap: Map<K, V>, newMap: Map<K, V>): Map<K, V> {
-    const newEntries = new Map<K, V>();
-
-    for (const [key, value] of newMap) {
-        // If the old map does not have the key, it's a new entry.
-        if (!oldMap.has(key)) {
-            newEntries.set(key, value);
-        }
-    }
-
-    return newEntries;
-}
-
-const rateLimiter = async () => {
-    await new Promise(r => setTimeout(r, 20)); // "All bots can make up to 50 requests per second to our API"
-    // this is actually conservative since we're waiting until the request completes before waiting again
-};
 
 async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
-    const webhookUrl = process.env.NOTIFICATION_WEBHOOK;
-    if (!webhookUrl) {
+    if (!config.webhook) {
         console.error("Webhook URL is not defined");
     }
 
@@ -141,23 +182,35 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
     }
 
     for (const [key, listing] of newListings.entries()) {
-        console.log(`New job listing found [${key}]: ${listing.title} at ${listing.location} - ${listing.url}`);
+        // Style the console output with colors and formatting
+        console.log(
+            '%c🔍 New Job Listing Found%c\n' +
+            '%cCompany:%c %s\n' +
+            '%cTitle:%c %s\n' +
+            '%cLocation:%c %s\n' +
+            '%cURL:%c %s',
+            'color: #4CAF50; font-weight: bold; font-size: 12px;', '', // Job Listing header
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', listing.company,
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', truncateString(listing.title, 50),
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', truncateString(listing.location, 25),
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', truncateString(listing.url, 70)
+        );
 
         const payload = {
             content: "New job listing found:",
             embeds: [{
                 title: listing.title,
                 url: listing.url,
-                description: `ID: ${key}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
+                description: `Company: ${listing.company}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
             }]
         };
 
-        if (webhookUrl) {
+        if (config.webhook) {
             let shouldRetry = true;
             while (shouldRetry) {
                 try {
                     await new Promise<void>((resolve, reject) => {
-                        const req = https.request(webhookUrl, {
+                        const req = https.request(config.webhook!, {
                             method: "POST",
                             headers: {
                                 "Content-Type": "application/json"
@@ -211,9 +264,11 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
     }
 }
 
+
 async function main() {
     process.on('SIGINT', async () => {
         console.log('Shutting down gracefully...');
+        await browserManager.forceClose();
         process.exit(0);
     });
 
@@ -222,22 +277,23 @@ async function main() {
     let oldListings = new Map<string, JobListing>();
     while (true) {
         try {
-            // Fetch both Discord and Riot Games listings in parallel
-            const [discordListings, riotListings] = await Promise.all([
+            // Fetch all listings in parallel
+            const [googleListings, discordListings, riotListings] = await Promise.all([
+                getGoogleListings(),
                 getDiscordListings(),
-                getRiotGamesListings()
+                getRiotGamesListings(),
             ]);
 
-            // Combine both maps into a single map
-            const currListings = new Map([...discordListings, ...riotListings]);
+            const currListings = new Map([...googleListings, ...discordListings, ...riotListings]);
 
             await sendWebhookNotifications(getNewEntries(oldListings, currListings));
             oldListings = currListings;
         } catch (error) {
             console.error('Error in main loop:', error);
+            await browserManager.forceClose(); // Clean up browser on error
         }
-        console.log(`Finished checking at ${formatDate(new Date())}`);
-        await new Promise(r => setTimeout(r, (Number(process.env.REFRESH_DURATION) || 60) * 60 * 1000));
+        console.log(`Finished checking at ${formatDate(new Date(), config.timezone)}`);
+        await new Promise(r => setTimeout(r, config.refreshDuration * 60 * 1000));
     }
 }
 
