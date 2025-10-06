@@ -15,15 +15,17 @@ function formatDate(date: Date): string {
     }).replace(/(\d+)\/(\d+)\/(\d+),\s(\d+):(\d+):(\d+)/, '$3-$1-$2 $4:$5:$6');
 }
 
+type Company = 'Google' | 'Discord' | 'Riot Games';
+
 type JobListing = {
     title: string,
     location: string,
     url: string,
-    foundDate: string
+    foundDate: string,
+    company: Company
 }
 
 async function getGoogleListings(): Promise<Map<string, JobListing>> {
-    const titleInclude = ["Software"];
     const titleExclude = ["Staff", "Principal", "Manager"];
 
     const jobListings: Map<string, JobListing> = new Map();
@@ -33,23 +35,20 @@ async function getGoogleListings(): Promise<Map<string, JobListing>> {
     await page.goto("https://www.google.com/about/careers/applications/u/1/jobs/results?sort_by=date&location=United%20States&target_level=MID&q=%22Software%20Engineer%22&degree=BACHELORS&employment_type=FULL_TIME", { waitUntil: 'networkidle0' });
 
     // Get raw job listings
-    let rawJobListingsXpath = "(//ul[@class='spHGqe']/li/div/div/div[1])/div";
-    let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
+    let rawJobListings = await page.$$('ul.spHGqe > li > div > div > div:first-child > div');
     for (const rawJobListing of rawJobListings) {
 
         // Extract job title
         const title = await rawJobListing.$eval('div:first-child > div > h3', el => el.textContent) || "n/a";
-        if (titleExclude.some(exclude => title.includes(exclude)) || !titleInclude.some(include => title.includes(include))) {
+        if (titleExclude.some(exclude => title.includes(exclude))) {
             continue;
         }
-        console.log(title)
 
         // Extract job location
         const location = await rawJobListing.$eval('div:nth-child(3) > p > span > span', el => el.textContent) || "n/a";
-        console.log(location)
 
         // Extract job URL
-        const url = await rawJobListing.$('div > div > a.WpHeLc').then(el => el?.getProperty('href')).then(el => el?.jsonValue()) as string || "n/a";
+        const url = await rawJobListing.$('div > div > a').then(el => el?.getProperty('href')).then(el => el?.jsonValue()) as string || "n/a";
 
         // Get current date time
         const foundDate = formatDate(new Date());
@@ -59,7 +58,7 @@ async function getGoogleListings(): Promise<Map<string, JobListing>> {
         const hashId: string = "GOOGLE-" + (jobIdMatch ? jobIdMatch[1] : new URL(url).pathname);
 
         // Store the job listing
-        jobListings.set(hashId, { title, location, url, foundDate });
+        jobListings.set(hashId, { title, location, url, foundDate, company: 'Google' });
     }
 
     await browser.close();
@@ -78,8 +77,7 @@ async function getDiscordListings(): Promise<Map<string, JobListing>> {
     await page.goto("https://discord.com/careers", { waitUntil: 'networkidle0' });
 
     // Get raw job listings
-    let rawJobListingsXpath = "//div[@class='jobs-list']/a";
-    let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
+    let rawJobListings = await page.$$('div.jobs-list > a');
     console.log(`Found ${rawJobListings.length} raw job listings`);
     for (const rawJobListing of rawJobListings) {
         // Extract job title
@@ -104,7 +102,7 @@ async function getDiscordListings(): Promise<Map<string, JobListing>> {
         const hashId: string = "DISCORD-" + new URL(url).pathname.split('/').pop();
 
         // Store the job listing
-        jobListings.set(hashId, { title, location, url, foundDate });
+        jobListings.set(hashId, { title, location, url, foundDate, company: 'Discord' });
     }
 
     await browser.close();
@@ -123,8 +121,7 @@ async function getRiotGamesListings(): Promise<Map<string, JobListing>> {
     await page.goto("https://www.riotgames.com/en/work-with-us/jobs", { waitUntil: 'domcontentloaded' });
 
     // Get raw job listings
-    let rawJobListingsXpath = "//ul[@class='job-list__body list--unstyled']/li/a";
-    let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
+    let rawJobListings = await page.$$('ul.job-list__body.list--unstyled > li > a');
     for (const rawJobListing of rawJobListings) {
 
         // Extract job title
@@ -149,7 +146,7 @@ async function getRiotGamesListings(): Promise<Map<string, JobListing>> {
         const hashId: string = "RIOT-" + new URL(url).pathname.split('/').pop();
 
         // Store the job listing
-        jobListings.set(hashId, { title, location, url, foundDate });
+        jobListings.set(hashId, { title, location, url, foundDate, company: 'Riot Games' });
     }
 
     await browser.close();
@@ -190,14 +187,26 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
     }
 
     for (const [key, listing] of newListings.entries()) {
-        console.log(`New job listing found [${truncateString(key, 20)}]: ${truncateString(listing.title, 40)} at ${truncateString(listing.location, 15)} - ${truncateString(listing.url, 50)}`);
+        // Style the console output with colors and formatting
+        console.log(
+            '%c🔍 New Job Listing Found%c\n' +
+            '%cCompany:%c %s\n' +
+            '%cTitle:%c %s\n' +
+            '%cLocation:%c %s\n' +
+            '%cURL:%c %s',
+            'color: #4CAF50; font-weight: bold; font-size: 12px;', '', // Job Listing header
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', listing.company,
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', truncateString(listing.title, 50),
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', truncateString(listing.location, 25),
+            'color: #2196F3; font-weight: bold;', 'color: inherit;', truncateString(listing.url, 70)
+        );
 
         const payload = {
             content: "New job listing found:",
             embeds: [{
                 title: listing.title,
                 url: listing.url,
-                description: `ID: ${key}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
+                description: `Company: ${listing.company}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
             }]
         };
 
