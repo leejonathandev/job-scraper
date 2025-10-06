@@ -22,6 +22,50 @@ type JobListing = {
     foundDate: string
 }
 
+async function getGoogleListings(): Promise<Map<string, JobListing>> {
+    const titleInclude = ["Software"];
+    const titleExclude = ["Staff", "Principal", "Manager"];
+
+    const jobListings: Map<string, JobListing> = new Map();
+
+    const browser = await puppeteer.launch();
+    const page = await browser.newPage();
+    await page.goto("https://www.google.com/about/careers/applications/u/1/jobs/results?sort_by=date&location=United%20States&target_level=MID&q=%22Software%20Engineer%22&degree=BACHELORS&employment_type=FULL_TIME", { waitUntil: 'networkidle0' });
+
+    // Get raw job listings
+    let rawJobListingsXpath = "(//ul[@class='spHGqe']/li/div/div/div[1])/div";
+    let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
+    for (const rawJobListing of rawJobListings) {
+
+        // Extract job title
+        const title = await rawJobListing.$eval('div:first-child > div > h3', el => el.textContent) || "n/a";
+        if (titleExclude.some(exclude => title.includes(exclude)) || !titleInclude.some(include => title.includes(include))) {
+            continue;
+        }
+        console.log(title)
+
+        // Extract job location
+        const location = await rawJobListing.$eval('div:nth-child(3) > p > span > span', el => el.textContent) || "n/a";
+        console.log(location)
+
+        // Extract job URL
+        const url = await rawJobListing.$('div > div > a.WpHeLc').then(el => el?.getProperty('href')).then(el => el?.jsonValue()) as string || "n/a";
+
+        // Get current date time
+        const foundDate = formatDate(new Date());
+
+        // Create a unique hash ID for the job listing
+        const jobIdMatch = url.match(/\/jobs\/results\/(\d+)-/);
+        const hashId: string = "GOOGLE-" + (jobIdMatch ? jobIdMatch[1] : new URL(url).pathname);
+
+        // Store the job listing
+        jobListings.set(hashId, { title, location, url, foundDate });
+    }
+
+    await browser.close();
+    return jobListings;
+}
+
 async function getDiscordListings(): Promise<Map<string, JobListing>> {
     const titleInclude: string[] = ["Software"];
     const titleExclude = ["Staff", "Principal", "Manager"];
@@ -112,6 +156,11 @@ async function getRiotGamesListings(): Promise<Map<string, JobListing>> {
     return jobListings;
 }
 
+function truncateString(str: string, maxLength: number): string {
+    if (str.length <= maxLength) return str;
+    return str.slice(0, maxLength - 3) + '...';
+}
+
 function getNewEntries<K, V>(oldMap: Map<K, V>, newMap: Map<K, V>): Map<K, V> {
     const newEntries = new Map<K, V>();
 
@@ -141,7 +190,7 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
     }
 
     for (const [key, listing] of newListings.entries()) {
-        console.log(`New job listing found [${key}]: ${listing.title} at ${listing.location} - ${listing.url}`);
+        console.log(`New job listing found [${truncateString(key, 20)}]: ${truncateString(listing.title, 40)} at ${truncateString(listing.location, 15)} - ${truncateString(listing.url, 50)}`);
 
         const payload = {
             content: "New job listing found:",
@@ -222,14 +271,14 @@ async function main() {
     let oldListings = new Map<string, JobListing>();
     while (true) {
         try {
-            // Fetch both Discord and Riot Games listings in parallel
-            const [discordListings, riotListings] = await Promise.all([
+            // Fetch all listings in parallel
+            const [googleListings, discordListings, riotListings] = await Promise.all([
+                getGoogleListings(),
                 getDiscordListings(),
-                getRiotGamesListings()
+                getRiotGamesListings(),
             ]);
 
-            // Combine both maps into a single map
-            const currListings = new Map([...discordListings, ...riotListings]);
+            const currListings = new Map([...googleListings, ...discordListings, ...riotListings]);
 
             await sendWebhookNotifications(getNewEntries(oldListings, currListings));
             oldListings = currListings;
