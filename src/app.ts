@@ -34,7 +34,7 @@ async function getDiscordListings(): Promise<Map<string, JobListing>> {
     await page.goto("https://discord.com/careers", { waitUntil: 'networkidle0' });
 
     // Get raw job listings
-    let rawJobListingsXpath = "//div[@class='jobs-list']/a"; 
+    let rawJobListingsXpath = "//div[@class='jobs-list']/a";
     let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
     console.log(`Found ${rawJobListings.length} raw job listings`);
     for (const rawJobListing of rawJobListings) {
@@ -126,7 +126,8 @@ function getNewEntries<K, V>(oldMap: Map<K, V>, newMap: Map<K, V>): Map<K, V> {
 }
 
 const rateLimiter = async () => {
-    await new Promise(r => setTimeout(r, 100)); // 100 millisecond delay between notifications
+    await new Promise(r => setTimeout(r, 20)); // "All bots can make up to 50 requests per second to our API"
+    // this is actually conservative since we're waiting until the request completes before waiting again
 };
 
 async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
@@ -147,37 +148,70 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
             embeds: [{
                 title: listing.title,
                 url: listing.url,
-                description: `Location: ${listing.location}\nFound Date: ${listing.foundDate}`
+                description: `ID: ${key}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
             }]
         };
 
         if (webhookUrl) {
-            const req = https.request(webhookUrl, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                }
-            }, (res) => {
-                if (res.statusCode !== 204) {
-                    console.error(`Failed to send webhook: ${res.statusCode}`);
-                }
-            });
+            let shouldRetry = true;
+            while (shouldRetry) {
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        const req = https.request(webhookUrl, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json"
+                            }
+                        }, async (res) => {
+                            // Handle rate limiting
+                            if (res.statusCode === 429) {
+                                let data = '';
+                                res.on('data', chunk => data += chunk);
+                                res.on('end', async () => {
+                                    try {
+                                        const rateLimit = JSON.parse(data);
+                                        const retryAfter = rateLimit.retry_after; // seconds
+                                        console.log(`Rate limited. Waiting ${retryAfter} seconds before retrying...`);
+                                        await new Promise(r => setTimeout(r, retryAfter * 1000));
+                                        reject(new Error('rate_limited'));
+                                    } catch (e) {
+                                        console.error('Error parsing rate limit response:', e);
+                                        reject(e);
+                                    }
+                                });
+                            } else if (res.statusCode !== 204) {
+                                console.error(`Failed to send webhook: ${res.statusCode}`);
+                                reject(new Error(`HTTP ${res.statusCode}`));
+                            } else {
+                                resolve();
+                            }
+                        });
 
-            req.on("error", (error) => {
-                console.error(`Error sending webhook: ${error}`);
-            });
+                        req.on("error", (error) => {
+                            console.error(`Error sending webhook: ${error}`);
+                            reject(error);
+                        });
 
-            req.write(JSON.stringify(payload));
-            req.end();
+                        req.write(JSON.stringify(payload));
+                        req.end();
+                    });
+
+                    shouldRetry = false; // If we get here, the request was successful
+                } catch (error: any) {
+                    if (error?.message !== 'rate_limited') {
+                        shouldRetry = false; // Don't retry on non-rate-limit errors
+                        throw error;
+                    }
+                    // For rate_limited errors, the loop will continue
+                }
+            }
         }
 
-        await rateLimiter(); // Replace the direct setTimeout
+        await rateLimiter(); // Normal delay between successful requests
     }
 }
 
 async function main() {
-
-
     process.on('SIGINT', async () => {
         console.log('Shutting down gracefully...');
         process.exit(0);
@@ -196,7 +230,7 @@ async function main() {
 
             // Combine both maps into a single map
             const currListings = new Map([...discordListings, ...riotListings]);
-            
+
             await sendWebhookNotifications(getNewEntries(oldListings, currListings));
             oldListings = currListings;
         } catch (error) {
