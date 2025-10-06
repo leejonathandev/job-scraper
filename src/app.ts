@@ -126,7 +126,8 @@ function getNewEntries<K, V>(oldMap: Map<K, V>, newMap: Map<K, V>): Map<K, V> {
 }
 
 const rateLimiter = async () => {
-    await new Promise(r => setTimeout(r, 100)); // 100 millisecond delay between notifications
+    await new Promise(r => setTimeout(r, 20)); // "All bots can make up to 50 requests per second to our API"
+    // this is actually conservative since we're waiting until the request completes before waiting again
 };
 
 async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
