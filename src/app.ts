@@ -22,6 +22,51 @@ type JobListing = {
     foundDate: string
 }
 
+async function getDiscordListings(): Promise<Map<string, JobListing>> {
+    const titleInclude: string[] = ["Software"];
+    const titleExclude = ["Staff", "Principal", "Manager"];
+    const locationInclude: string[] = ["San Francisco", "SF Bay Area", "Remote"];
+
+    const jobListings: Map<string, JobListing> = new Map();
+
+    const browser = await puppeteer.launch();
+    const page = await browser.newPage();
+    await page.goto("https://discord.com/careers", { waitUntil: 'networkidle0' });
+
+    // Get raw job listings
+    let rawJobListingsXpath = "//div[@class='jobs-list']/a"; 
+    let rawJobListings = await page.$$(`::-p-xpath(${rawJobListingsXpath})`); // Using $$ for multiple elements
+    console.log(`Found ${rawJobListings.length} raw job listings`);
+    for (const rawJobListing of rawJobListings) {
+        // Extract job title
+        const title = await rawJobListing.$eval('h3.heading-28px', el => el.textContent) || "n/a";
+        if (titleExclude.some(exclude => title.includes(exclude)) || !titleInclude.some(include => title.includes(include))) {
+            continue;
+        }
+
+        // Extract job location
+        const location = await rawJobListing.$eval('p.paragraph-white-opacity50', el => el.textContent) || "n/a";
+        // if (!locationInclude.some(include => location.includes(include))) {
+        //     continue;
+        // }
+
+        // Extract job URL
+        const url = await rawJobListing.getProperty('href').then(el => el?.jsonValue()) as string || "n/a";
+
+        // Get current date time
+        const foundDate = formatDate(new Date());
+
+        // Create a unique hash ID for the job listing
+        const hashId: string = "DISCORD-" + new URL(url).pathname.split('/').pop();
+
+        // Store the job listing
+        jobListings.set(hashId, { title, location, url, foundDate });
+    }
+
+    await browser.close();
+    return jobListings;
+}
+
 async function getRiotGamesListings(): Promise<Map<string, JobListing>> {
     const titleInclude = ["Software"];
     const titleExclude = ["Staff", "Principal", "Manager"];
@@ -88,17 +133,14 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
     const webhookUrl = process.env.NOTIFICATION_WEBHOOK;
     if (!webhookUrl) {
         console.error("Webhook URL is not defined");
-        return;
     }
 
     if (newListings.size === 0) {
         console.log("No new job listings found");
-        return;
     }
 
-    for (const listing of newListings.values()) {
-
-        console.log(`New job listing found: ${listing.title} at ${listing.location} - ${listing.url}`);
+    for (const [key, listing] of newListings.entries()) {
+        console.log(`New job listing found [${key}]: ${listing.title} at ${listing.location} - ${listing.url}`);
 
         const payload = {
             content: "New job listing found:",
@@ -109,23 +151,25 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
             }]
         };
 
-        const req = https.request(webhookUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            }
-        }, (res) => {
-            if (res.statusCode !== 204) {
-                console.error(`Failed to send webhook: ${res.statusCode}`);
-            }
-        });
+        if (webhookUrl) {
+            const req = https.request(webhookUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                }
+            }, (res) => {
+                if (res.statusCode !== 204) {
+                    console.error(`Failed to send webhook: ${res.statusCode}`);
+                }
+            });
 
-        req.on("error", (error) => {
-            console.error(`Error sending webhook: ${error}`);
-        });
+            req.on("error", (error) => {
+                console.error(`Error sending webhook: ${error}`);
+            });
 
-        req.write(JSON.stringify(payload));
-        req.end();
+            req.write(JSON.stringify(payload));
+            req.end();
+        }
 
         await rateLimiter(); // Replace the direct setTimeout
     }
@@ -144,7 +188,15 @@ async function main() {
     let oldListings = new Map<string, JobListing>();
     while (true) {
         try {
-            let currListings = await getRiotGamesListings();
+            // Fetch both Discord and Riot Games listings in parallel
+            const [discordListings, riotListings] = await Promise.all([
+                getDiscordListings(),
+                getRiotGamesListings()
+            ]);
+
+            // Combine both maps into a single map
+            const currListings = new Map([...discordListings, ...riotListings]);
+            
             await sendWebhookNotifications(getNewEntries(oldListings, currListings));
             oldListings = currListings;
         } catch (error) {
