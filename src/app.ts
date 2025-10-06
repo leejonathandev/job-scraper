@@ -145,33 +145,68 @@ async function sendWebhookNotifications(newListings: Map<string, JobListing>) {
         const payload = {
             content: "New job listing found:",
             embeds: [{
-                title: listing.title,
+                title: key,
                 url: listing.url,
-                description: `Location: ${listing.location}\nFound Date: ${listing.foundDate}`
+                description: `Title: ${listing.title}\nLocation: ${listing.location}\nFound Date: ${listing.foundDate}`
             }]
         };
 
         if (webhookUrl) {
-            const req = https.request(webhookUrl, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                }
-            }, (res) => {
-                if (res.statusCode !== 204) {
-                    console.error(`Failed to send webhook: ${res.statusCode}`);
-                }
-            });
+            let shouldRetry = true;
+            while (shouldRetry) {
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        const req = https.request(webhookUrl, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json"
+                            }
+                        }, async (res) => {
+                            // Handle rate limiting
+                            if (res.statusCode === 429) {
+                                let data = '';
+                                res.on('data', chunk => data += chunk);
+                                res.on('end', async () => {
+                                    try {
+                                        const rateLimit = JSON.parse(data);
+                                        const retryAfter = rateLimit.retry_after; // seconds
+                                        console.log(`Rate limited. Waiting ${retryAfter} seconds before retrying...`);
+                                        await new Promise(r => setTimeout(r, retryAfter * 1000));
+                                        reject(new Error('rate_limited'));
+                                    } catch (e) {
+                                        console.error('Error parsing rate limit response:', e);
+                                        reject(e);
+                                    }
+                                });
+                            } else if (res.statusCode !== 204) {
+                                console.error(`Failed to send webhook: ${res.statusCode}`);
+                                reject(new Error(`HTTP ${res.statusCode}`));
+                            } else {
+                                resolve();
+                            }
+                        });
 
-            req.on("error", (error) => {
-                console.error(`Error sending webhook: ${error}`);
-            });
+                        req.on("error", (error) => {
+                            console.error(`Error sending webhook: ${error}`);
+                            reject(error);
+                        });
 
-            req.write(JSON.stringify(payload));
-            req.end();
+                        req.write(JSON.stringify(payload));
+                        req.end();
+                    });
+                    
+                    shouldRetry = false; // If we get here, the request was successful
+                } catch (error: any) {
+                    if (error?.message !== 'rate_limited') {
+                        shouldRetry = false; // Don't retry on non-rate-limit errors
+                        throw error;
+                    }
+                    // For rate_limited errors, the loop will continue
+                }
+            }
         }
 
-        await rateLimiter(); // Replace the direct setTimeout
+        await rateLimiter(); // Normal delay between successful requests
     }
 }
 
